@@ -1,0 +1,71 @@
+version: '2.4'
+services:
+
+  ma1sd-app:
+    image: tiredofit/ma1sd:latest
+    container_name: ma1sd-app
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.ma1sd.rule=Host(`ma1sd.example.com`)
+      - traefik.http.services.ma1sd.loadbalancer.server.port=8008
+    environment:
+      - TIMEZONE=America/Vancouver
+      - CONTAINER_NAME=ma1sd-app
+
+      - SETUP_TYPE=AUTO
+
+      - DB_TYPE=postgresql
+      - DB_HOST=ma1sd-db
+      - DB_NAME=ma1sd
+      - DB_USER=ma1sd
+      - DB_PASS=password
+      - DB_PORT=5432
+
+      - SERVER_NAME=matrix
+    networks:
+      - proxy
+      - services
+    restart: always
+
+  ma1sd-db:
+    image: tiredofit/postgres:15
+    container_name: ma1sd-db
+    volumes:
+      - ./db/postgresql:/var/lib/postgresql
+    environment:
+      - TIMEZONE=America/Vancouver
+      - CONTAINER_NAME=ma1sd-db
+      - ZABBIX_AGENT_TYPE=classic
+
+      - POSTGRES_DB=ma1sd
+      - POSTGRES_USER=ma1sd
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    networks:
+      - services
+    restart: always
+
+  ma1sd-db-backup:
+    image: tiredofit/db-backup
+    container_name: ma1sd-db-backup
+    volumes:
+      - ./dbbackup:/backup
+    environment:
+      - TIMEZONE=America/Vancouver
+      - CONTAINER_NAME=ma1sd-db-backup
+      - DB_HOST=ma1sd-db
+      - DB_TYPE=postgres
+      - DB_NAME=ma1sd
+      - DB_USER=ma1sd
+      - DB_PASS=password
+      - DB_DUMP_FREQ=1440
+      - DB_DUMP_BEGIN=0000
+      - DB_CLEANUP_TIME=8640
+    networks:
+      - services
+    restart: always
+networks:
+  proxy:
+    external: true
+  services:
+    external: true

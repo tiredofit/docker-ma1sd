@@ -1,0 +1,22 @@
+#!/command/with-contenv bash
+
+source /assets/functions/00-container
+PROCESS_NAME="ma1sd"
+prepare_service defaults single
+
+check_container_initialized
+check_service_initialized init
+
+liftoff
+
+
+print_start "Starting ma1sd ${MA1SD_VERSION}"
+if [ "${LOG_TYPE,,}" = "file" ] ; then
+    exec s6-setuidgid ma1sd java \
+                                -jar /app/ma1sd.jar \
+                                -c "${CONFIG_PATH}"/"${CONFIG_FILE}" | silent s6-setuidgid ma1sd tee -a "${LOG_PATH}"/"${LOG_FILE}"
+else
+    exec s6-setuidgid ma1sd java \
+                                -jar /app/ma1sd.jar \
+                                -c "${CONFIG_PATH}"/"${CONFIG_FILE}"
+fi

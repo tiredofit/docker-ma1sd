@@ -1,0 +1,176 @@
+#!/command/with-contenv bash
+
+bootstrap_filesystem() {
+    if [ ! -d "${CONFIG_PATH}" ]; then
+        mkdir -p "${CONFIG_PATH}"
+    fi
+    if [ $(stat -c %U "${CONFIG_PATH}") != "ma1sd" ] ; then chown ma1sd:ma1sd "${CONFIG_PATH}" ; fi
+
+    if [ ! -d "${DATA_PATH}" ]; then
+        mkdir -p "${DATA_PATH}"
+    fi
+    if [ $(stat -c %U "${DATA_PATH}") != "ma1sd" ] ; then chown ma1sd:ma1sd "${DATA_PATH}" ; fi
+
+    if [ ! -d "${CERT_PATH}" ]; then
+        mkdir -p "${CERT_PATH}"
+    fi
+    if [ $(stat -c %U "${CERT_PATH}") != "ma1sd" ] ; then chown ma1sd:ma1sd "${CERT_PATH}" ; fi
+
+    if [ "${LOG_TYPE,,}" = "file" ] ; then
+        if [ ! -d "${LOG_PATH}" ]; then
+            mkdir -p "${LOG_PATH}"
+        fi
+        if [ $(stat -c %U "${LOG_PATH}") != "ma1sd" ] ; then chown ma1sd:ma1sd "${LOG_PATH}" ; fi
+        create_logrotate ma1sd "${LOG_PATH}"/"${LOG_FILE}" ma1sd ma1sd
+    fi
+}
+
+generate_configuration() {
+    if [ ! -f "${CONFIG_PATH}"/"${CONFIG_FILE}" ]; then
+        case "${DB_TYPE,,}" in
+            postgres* )
+                ma1sd_db=$(cat <<EOF
+storage:
+  backend: postgresql
+  provider:
+    postgresql:
+      database: '//${DB_HOST}:${DB_PORT}/${DB_NAME}'
+      username: '${DB_USER}'
+      password: '${DB_PASS}'
+      pool: ${DB_ENABLE_POOL,,}
+      testBeforeGetFromPool: ${DB_TEST_POOL,,}
+      checkConnectionsEveryMillis: ${DB_KEEP_ALIVE_INTERVAL_MS}
+      maxConnectionsFree: ${DB_FREE_CONNECTIONS_MAX}
+      maxConnectionAgeMillis: ${DB_TIMEOUT}
+EOF
+                    )
+            ;;
+            sqlite* )
+                ma1sd_db=$(cat <<EOF
+storage:
+  backend: sqlite
+  provider:
+    sqlite:
+      database: '${SQLITE_DB_PATH}/${SQLITE_DB_NAME}'
+EOF
+                )
+            ;;
+        esac
+
+        print_notice "[generate_configuration] - Creating default configuration at '${CONFIG_PATH}/${CONFIG_FILE}'"
+        cat <<EOF | silent sudo -u ma1sd tee "${CONFIG_PATH}"/"${CONFIG_FILE}"
+## tiredofit/ma1sd Matrix Identity Server Configuration
+## If you want to use your own configuration files set SETUP_TYPE=MANUAL when starting container
+## Last Generated on $(TZ=${TIMEZONE} date +'%Y-%m-%d %H:%M:%S %Z')
+# For a complete list of options, see https://github.com/ma1uta/ma1sd/docs/README.md
+# Please follow the Getting Started guide if this is your first time using/configuring ma1sd
+#  -- https://github.com/ma1uta/ma1sd/blob/master/docs/getting-started.md#getting-started
+#
+
+matrix:
+  domain: '${MATRIX_DOMAIN}'
+  v1: ${ENABLE_MATRIX_API_V1,,}
+  v2: ${ENABLE_MATRIX_API_V2,,}
+
+server:
+  name: '${SERVER_NAME}'
+  port: ${LISTEN_PORT}
+  publicUrl: '${SERVER_PUBLIC_URL}'
+
+key:
+  path: '${CERT_PATH}'
+
+${ma1sd_db}
+
+threepid:
+  medium:
+    email:
+      identity:
+        from: "${SMTP_FROM}"
+      connectors:
+        smtp:
+          host: "${SMTP_HOST}"
+          port: ${SMTP_PORT}
+          tls: ${smtp_tls}
+          login: "${SMTP_USER}"
+          password: "${SMTP_PASS}"
+
+#### MSC2134 (hash lookup)
+
+hashing:
+  enabled: ${HASH_ENABLE,,}
+  pepperLength: ${HASH_PEPPER_LENGTH}
+  rotationPolicy: per_requests # or 'per_seconds' how often the hashes will be updating
+  hashStorageType: sql # or 'in_memory' where the hashes will be stored
+  algorithms:
+    - none   # the same as v1 bulk lookup
+    - sha256 # hash the 3PID and pepper.
+  delay: ${HASH_DELAY}
+  requests: ${HASH_LOOKUP_REQUESTS}
+
+### hash lookup for synapseSql provider.
+# synapseSql:
+#   lookup:
+#     query: 'select user_id as mxid, medium, address from user_threepid_id_server' # query for retrive 3PIDs for hashes.
+#   legacyRoomNames: false  # use the old query to get room names.
+
+ldap:
+  enabled: ${ENABLE_LDAP,,}
+  lookup: ${LDAP_LOOKUP,,}
+  activeDirectory: ${ldap_ad_mode}
+  defaultDomain: '${LDAP_DEFAULT_DOMAIN}'
+  connection:
+    host: '${LDAP_HOST}'
+    port: ${LDAP_PORT}
+    bindDn: '${LDAP_BIND_DN}'
+    tls: ${LDAP_TLS,,}
+    bindPassword: '${LDAP_BIND_PASS}'
+    baseDNs:
+      - '${LDAP_BASE_DN}'
+  attribute:
+    uid:
+      type: '${LDAP_ATTRIBUTE_UID}'
+      value: '${LDAP_ATTRIBUTE_UID_VALUE}'
+    name: '${LDAP_ATTRIBUTE_NAME}'
+  identity:
+    filter: '${LDAP_FILTER}'
+
+#### MSC2140 (Terms)
+#policy:
+#  policies:
+#    term_name: # term name
+#      version: 1.0 # version
+#      terms:
+#        en:  # lang
+#          name: term name en  # localized name
+#          url: https://ma1sd.host.tld/term_en.html  # localized url
+#        fe:  # lang
+#          name: term name fr  # localized name
+#          url: https://ma1sd.host.tld/term_fr.html  # localized url
+#      regexp:
+#        - '/_matrix/identity/v2/account.*'
+#        - '/_matrix/identity/v2/hash_details'
+#        - '/_matrix/identity/v2/lookup'
+#
+
+logging:
+  root: ${LOG_LEVEL,,}
+  app: ${LOG_LEVEL_MA1SD,,}
+  requests: ${LOG_REQUESTS,,}
+
+invite:
+  fullDisplayName: ${INVITE_SHOW_FULL_DISPLAY_NAME,,}
+  resolution:
+    timer: ${INVITE_RESOLUTION_TIMER}
+    period: ${INVITE_RESOLUTION_PERIOD}
+
+internal:
+  enabled: ${ENABLE_INTERNAL_API,,}
+EOF
+    fi
+
+    if [ "${SETUP_MODE,,}" = "auto" ] ; then
+        :
+        #yq -i '.media_store_path = "'$(echo "${MEDIA_PATH}")'"' "${CONFIG_PATH}"/"${CONFIG_FILE}" -o yaml
+    fi
+}

@@ -1,0 +1,15 @@
+#!/command/with-contenv bash
+
+source /assets/functions/00-container
+prepare_service
+PROCESS_NAME="ma1sd"
+
+if [ "${SETUP_MODE,,}" = "auto" ] && [[ "${DB_TYPE,,}" == postgres* ]] ; then
+    sanity_db
+    db_ready postgres
+fi
+
+bootstrap_filesystem
+generate_configuration
+
+liftoff
